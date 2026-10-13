@@ -1,0 +1,8 @@
+# Rust build artifacts and generated native binaries
+**/target/
+*.exe
+*.dll
+*.pdb
+
+# Windows capture spike output is machine-specific
+/crates/platform-windows/spike_output/
