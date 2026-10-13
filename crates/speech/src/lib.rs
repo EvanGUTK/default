@@ -4,3 +4,4 @@
 
 pub mod audio;
 pub mod metrics;
+pub mod recognizer;
