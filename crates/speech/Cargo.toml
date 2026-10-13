@@ -1,0 +1,12 @@
+[package]
+name = "toby-speech-spike"
+version = "0.0.0"
+edition = "2024"
+description = "M0 spike: measure local whisper.cpp recognition latency and accuracy"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+hound = "3.5"
+whisper-rs = "0.16"
