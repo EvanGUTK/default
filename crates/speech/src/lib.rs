@@ -3,3 +3,4 @@
 //! This crate is a measurement harness, not the production speech adapter.
 
 pub mod audio;
+pub mod metrics;
