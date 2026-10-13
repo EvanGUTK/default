@@ -5,3 +5,4 @@
 pub mod audio;
 pub mod metrics;
 pub mod recognizer;
+pub mod vad;
