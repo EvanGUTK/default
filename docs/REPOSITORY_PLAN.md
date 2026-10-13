@@ -46,7 +46,9 @@ No branch merge or default-branch change is implied by creating this blueprint.
 
 ## Worktree policy
 
-Create one isolated worktree per concurrent bounded implementation task. Each worktree checks out its own feature branch. Keep shared local runtime state outside the repository and use different test ports/process identities when needed.
+Whenever more than one agent is working on the same branch concurrently, each agent must have its own isolated worktree checked out to that branch. Single-agent branches may share a worktree with the branch checkout, but the moment a second agent joins the same branch both must be split into separate worktrees before work begins.
+
+Create one worktree per agent per active branch. Keep shared local runtime state outside the repository and use different test ports/process identities when needed.
 
 A worktree does not provide application-data isolation automatically. Workers must avoid the user's real mailbox, live provider credentials, active personal browser profile, and shared production SQLite state during automated tests.
 
