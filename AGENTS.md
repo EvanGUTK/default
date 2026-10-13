@@ -16,7 +16,17 @@ A hierarchy document describes future responsibilities; it does not by itself re
 
 ## Engineering rules
 
-Use a separate feature branch/worktree for each concurrent implementation task. Declare ownership of shared contracts. Make coherent focused commits with directly relevant tests and documentation.
+Use a separate feature branch/worktree for each concurrent implementation task. Declare ownership of shared contracts.
+
+### Atomic commits — required
+
+Every commit must contain exactly one logical change. This is not a style preference; it is a hard rule so the owner can bisect and revert individual behaviors without untangling unrelated work.
+
+- One behavior change (or one new file, one refactor, one doc update) per commit.
+- Include only the tests and documentation directly relevant to that change — nothing else.
+- Do not bundle a feature, its refactor, and a docs update into a single commit.
+- Commit message format: `<type>(<scope>): <what changed>` — e.g. `spike(m0): add whisper-rs transcription binary`.
+- If you find yourself writing "and" in a commit message, split the commit.
 
 Verify outcomes instead of inferring success from output, silence, or model confidence. Report actual checks and unresolved limitations. Never claim an integration or benchmark exists before it is demonstrated.
 
