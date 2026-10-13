@@ -1,0 +1,47 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Toby Desktop Shell Spike",
+  "version": "0.1.0",
+  "identifier": "dev.toby.desktop-shell-spike",
+  "build": {
+    "beforeDevCommand": "npm run generate-icons && npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run generate-icons && npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "overlay",
+        "title": "Toby Overlay",
+        "url": "index.html?window=overlay",
+        "width": 300,
+        "height": 80,
+        "visible": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false
+      },
+      {
+        "label": "settings",
+        "title": "Toby Settings",
+        "url": "index.html",
+        "width": 520,
+        "height": 300,
+        "center": true,
+        "visible": false,
+        "resizable": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:;"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all"
+  }
+}
