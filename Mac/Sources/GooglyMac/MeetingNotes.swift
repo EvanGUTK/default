@@ -35,7 +35,8 @@ enum MeetingNotes {
     /// The session's folder, made the first time it's needed. Throws for an id that isn't plain.
     static func folder(session: String, started: Date) throws -> URL {
         guard isPlainID(session) else {
-            NSLog("Googly: refusing notes session id \(String(session.prefix(16)).debugDescription) (\(session.count) characters)")
+            // The id is untrusted: pass it as an argument, never as part of NSLog's format string.
+            NSLog("Googly: refusing notes session id %@ (%ld characters)", String(session.prefix(16)).debugDescription, session.count)
             throw SessionError.badSessionID
         }
         let fm = FileManager.default
