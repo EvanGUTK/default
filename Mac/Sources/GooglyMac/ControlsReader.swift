@@ -73,14 +73,25 @@ enum ControlsReader {
         return (name, controls)
     }
 
-    /// The focused element of the front app: where typing will go, and whether it's a password field.
-    static func focusedField() -> (frame: CGRect?, secure: Bool) {
-        guard ComputerControl.isTrusted, let app = NSWorkspace.shared.frontmostApplication else { return (nil, false) }
+    /// Where typing would go right now. Anything but `.ordinary` means "don't type here": a password
+    /// field is off limits, and if the lookup can't tell (no permission, timeout, nothing focused) it
+    /// might be one, so the answer fails closed.
+    struct FocusedField {
+        enum Kind { case ordinary, secure, unknown }
+        let kind: Kind
+        let frame: CGRect?
+    }
+
+    static func focusedField() -> FocusedField {
+        let unknown = FocusedField(kind: .unknown, frame: nil)
+        guard ComputerControl.isTrusted, let app = NSWorkspace.shared.frontmostApplication else { return unknown }
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(appElement, 0.2)
-        guard let focused: AXUIElement = attribute(appElement, kAXFocusedUIElementAttribute) else { return (nil, false) }
+        guard let focused: AXUIElement = attribute(appElement, kAXFocusedUIElementAttribute) else { return unknown }
         let subrole: String = attribute(focused, kAXSubroleAttribute) ?? ""
-        return (frame(of: focused), subrole == "AXSecureTextField")
+        let roleDescription: String = attribute(focused, kAXRoleDescriptionAttribute) ?? ""
+        let secure = subrole == "AXSecureTextField" || roleDescription.lowercased().contains("secure")
+        return FocusedField(kind: secure ? .secure : .ordinary, frame: frame(of: focused))
     }
 
     private static func describe(_ element: AXUIElement, kind: String) -> String {

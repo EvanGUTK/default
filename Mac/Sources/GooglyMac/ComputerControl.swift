@@ -9,6 +9,7 @@ enum ComputerControl {
     enum ControlError: LocalizedError {
         case notTrusted
         case unknownKey(String)
+        case refusedShortcut(String)
 
         var errorDescription: String? {
             switch self {
@@ -16,6 +17,8 @@ enum ComputerControl {
                 return "I need Accessibility permission to click and type. The user has to allow Bluey in System Settings, Privacy & Security, Accessibility."
             case .unknownKey(let key):
                 return "I don't know the key \"\(key)\"."
+            case .refusedShortcut(let label):
+                return "I won't press \(label) (it quits apps, logs out, locks, force-quits or deletes things). Ask the user to do it."
             }
         }
     }
@@ -55,6 +58,8 @@ enum ComputerControl {
         post(.mouseMoved, at: point, button: button)
         try? await Task.sleep(for: .milliseconds(30))
         for i in 1...max(1, count) {
+            // A stop lands between clicks; once a button is down it always gets its release below.
+            if Task.isCancelled { return }
             post(down, at: point, button: button, clickState: i)
             try? await Task.sleep(for: .milliseconds(35))
             post(up, at: point, button: button, clickState: i)
@@ -80,6 +85,7 @@ enum ComputerControl {
         post(.mouseMoved, at: point, button: .left)
         let steps = 12
         for _ in 0..<steps {
+            if Task.isCancelled { return }
             let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2,
                                 wheel1: Int32(-dy / steps), wheel2: Int32(-dx / steps), wheel3: 0)
             event?.location = point
@@ -104,6 +110,7 @@ enum ComputerControl {
         let pause: Duration = text.count > 160 ? .milliseconds(12) : .milliseconds(22)
         var chunk = ""
         for character in text {
+            if Task.isCancelled { return }
             if character == "\n" || character == "\r" || character == "\t" {
                 if !chunk.isEmpty {
                     typeUnicode(chunk)
@@ -149,10 +156,45 @@ enum ComputerControl {
         }
     }
 
-    /// Presses a key or shortcut like "cmd+t", "return", "cmd+shift+n" or "down".
-    /// Returns a short label for it, like "⌘T".
-    @discardableResult
-    static func press(_ combo: String) throws -> String {
+    /// A parsed key chord: modifier flags plus one key code, whatever aliases or order it was written in.
+    struct Shortcut {
+        let flags: CGEventFlags
+        let keyCode: Int
+        /// Short display form, like "⌘T".
+        let label: String
+
+        /// True when the chord would put characters into the focused field (or submit it): a pasted
+        /// clipboard, or any key that isn't a command/control shortcut or a navigation key.
+        var insertsText: Bool {
+            if keyCode == kVK_ANSI_V && flags.contains(.maskCommand) { return true }
+            if flags.contains(.maskCommand) || flags.contains(.maskControl) { return false }
+            return !ComputerControl.navigationKeys.contains(keyCode)
+        }
+    }
+
+    /// Chords he never presses. A chord is refused when it holds the key and at least these modifiers,
+    /// so extra modifiers can't dodge it: ⌘Q (quit; with ⇧ it logs out, with ⌃ it locks), ⌘⌥Esc (force quit),
+    /// ⌘⌫ and ⌘⌦ (move to Trash; with ⇧ it empties the Trash).
+    private static let refusedChords: [(keyCode: Int, flags: CGEventFlags)] = [
+        (kVK_ANSI_Q, [.maskCommand]),
+        (kVK_Escape, [.maskCommand, .maskAlternate]),
+        (kVK_Delete, [.maskCommand]),
+        (kVK_ForwardDelete, [.maskCommand]),
+    ]
+
+    /// Keys that move around or dismiss things without typing anything.
+    private static let navigationKeys: Set<Int> = [
+        kVK_Escape, kVK_Tab, kVK_LeftArrow, kVK_RightArrow, kVK_UpArrow, kVK_DownArrow,
+        kVK_Home, kVK_End, kVK_PageUp, kVK_PageDown,
+        kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10, kVK_F11, kVK_F12,
+    ]
+
+    static func isRefused(_ shortcut: Shortcut) -> Bool {
+        refusedChords.contains { shortcut.keyCode == $0.keyCode && shortcut.flags.isSuperset(of: $0.flags) }
+    }
+
+    /// Reads a chord like "cmd+t", "return", "cmd+shift+n" or "down".
+    static func parse(_ combo: String) throws -> Shortcut {
         var flags: CGEventFlags = []
         var label = ""
         var keyCode: Int?
@@ -181,8 +223,22 @@ enum ComputerControl {
             }
         }
         guard let keyCode else { throw ControlError.unknownKey(combo) }
-        pressKey(code: keyCode, flags: flags)
-        return label + keyLabel
+        return Shortcut(flags: flags, keyCode: keyCode, label: label + keyLabel)
+    }
+
+    /// Presses a key or shortcut like "cmd+t", "return", "cmd+shift+n" or "down".
+    /// Returns a short label for it, like "⌘T".
+    @discardableResult
+    static func press(_ combo: String) throws -> String {
+        try press(parse(combo))
+    }
+
+    /// Presses a parsed chord, unless it's on the never-press list.
+    @discardableResult
+    static func press(_ shortcut: Shortcut) throws -> String {
+        guard !isRefused(shortcut) else { throw ControlError.refusedShortcut(shortcut.label) }
+        pressKey(code: shortcut.keyCode, flags: shortcut.flags)
+        return shortcut.label
     }
 
     private static let keyCodes: [String: Int] = {

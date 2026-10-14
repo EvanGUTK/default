@@ -15,6 +15,10 @@ final class RealtimeHost {
     private var readingDone: DispatchWorkItem?
     /// Tools run one at a time, in the order he asked for them.
     private var toolChain: Task<Void, Never>?
+    /// Every tool call that hasn't finished (running or waiting its turn), so the stop hotkey can cancel them all.
+    private var toolTasks: [UUID: Task<Void, Never>] = [:]
+    /// True between a drag's mouse-down and mouse-up, so a stop can let go of the button.
+    private var dragInProgress = false
     /// After the stop hotkey, his actions are refused for a few seconds.
     private var stoppedUntil = 0.0
     /// True while he's awake and talking with you (false = follow mode).
@@ -95,11 +99,20 @@ final class RealtimeHost {
             DispatchQueue.main.asyncAfter(deadline: .now() + readTime, execute: work)
         case "tool":
             let previous = toolChain
-            toolChain = Task { @MainActor in
+            let id = UUID()
+            let task = Task { @MainActor in
                 await previous?.value
-                let result = await self.runTool(packet.tool ?? "", arguments: packet.text ?? "{}")
+                defer { self.toolTasks[id] = nil }
+                // A stop cancels this task; it still answers, so the phone isn't left waiting.
+                var result: (text: String, image: String?) = (Self.stoppedText, nil)
+                if !Task.isCancelled {
+                    result = await self.runTool(packet.tool ?? "", arguments: packet.text ?? "{}")
+                    if Task.isCancelled { result = (Self.stoppedText, nil) }
+                }
                 reply(Packet(command: "toolResult", callID: packet.callID, text: result.text, image: result.image))
             }
+            toolChain = task
+            toolTasks[id] = task
         default:
             break
         }
@@ -143,13 +156,23 @@ final class RealtimeHost {
         onChange?()
     }
 
-    /// The stop hotkey: refuse any further actions for a moment and bring the cursor home.
+    /// The stop hotkey: cancel every tool call (the running one stops at its next step, the waiting ones never
+    /// start), let go of the mouse button, refuse further actions for a moment and bring the cursor home.
     func stopActions() {
         stoppedUntil = CACurrentMediaTime() + 6
+        for task in toolTasks.values { task.cancel() }
         queue = []
+        releaseDrag()
         engine.dragging = false
         goHome()
         overlay.view.bubble("Stopped", life: 1.6)
+    }
+
+    /// Lets go of the mouse button if a drag is in progress. Safe to call twice.
+    private func releaseDrag(at point: CGPoint = ComputerControl.mouseLocation) {
+        guard dragInProgress else { return }
+        dragInProgress = false
+        ComputerControl.dragEnd(at: point)
     }
 
     // MARK: Tools
@@ -256,6 +279,10 @@ final class RealtimeHost {
                 reports.show(report)
                 return ("The full report is now in a card on the user's screen. Reply with ONE short line: the key takeaway in your own words. Don't repeat the report." + Self.reportMarker + report.plainText, nil)
             } catch {
+                if Task.isCancelled {
+                    reports.close()
+                    return stoppedResult
+                }
                 reports.showError(error.localizedDescription)
                 return ("Research failed: \(error.localizedDescription). Tell the user in a few words.", nil)
             }
@@ -321,7 +348,7 @@ final class RealtimeHost {
             return "The user has turned off computer control in the menu bar. You can still look and point."
         }
         if CACurrentMediaTime() < stoppedUntil {
-            return "The user pressed stop. Don't do anything else until they ask again."
+            return Self.stoppedText
         }
         if !ComputerControl.isTrusted {
             ComputerControl.askForPermission()
@@ -330,8 +357,23 @@ final class RealtimeHost {
         return nil
     }
 
-    /// Shortcuts that log out, lock the screen or force-quit apps are left to the user.
-    private static let refusedShortcuts: Set<String> = ["cmd+shift+q", "cmd+option+shift+q", "ctrl+cmd+q", "cmd+option+escape", "cmd+option+esc"]
+    /// What he's told when the user stopped him (also the answer to every call the stop cancelled).
+    private static let stoppedText = "The user pressed stop. Don't do anything else until they ask again."
+
+    private var stoppedResult: (text: String, image: String?) { (Self.stoppedText, nil) }
+
+    /// Why typing, or pressing a key that types, is off limits at the focused field. Nil means it's fine.
+    /// Quitting, logging out, locking, force-quitting and deleting are refused in `ComputerControl.press`.
+    private static func typingRefusal(_ field: ControlsReader.FocusedField) -> String? {
+        switch field.kind {
+        case .ordinary:
+            return nil
+        case .secure:
+            return "That's a password field. Ask the user to type it themselves."
+        case .unknown:
+            return "I can't tell what's focused, and it could be a password field, so I won't type or press text keys. Click a text field first, or ask the user."
+        }
+    }
 
     private func runAction(_ name: String, _ args: [String: Any]) async -> (text: String, image: String?) {
         takeControl()
@@ -346,11 +388,14 @@ final class RealtimeHost {
             let count = (args["double"] as? Bool ?? false) ? 2 : 1
             let saved = ComputerControl.mouseLocation
             await fly(to: target.point)
+            guard !Task.isCancelled else { return stoppedResult }
             view.clickEffect(at: target.point, right: right)
             try? await Task.sleep(for: .milliseconds(90))  // the click lands at the bottom of the squish
+            guard !Task.isCancelled else { return stoppedResult }
             await ComputerControl.click(at: target.point, right: right, count: count)
             try? await Task.sleep(for: .milliseconds(60))
             ComputerControl.warp(to: saved)  // hand your pointer back where you left it
+            guard !Task.isCancelled else { return stoppedResult }
             try? await Task.sleep(for: .milliseconds(380))
             let verb = right ? "Right-clicked" : count == 2 ? "Double-clicked" : "Clicked"
             return await look(prefix: "\(verb) \(target.name == "that spot" ? "there" : "\"\(target.name)\"").")
@@ -359,15 +404,15 @@ final class RealtimeHost {
             let text = args["text"] as? String ?? ""
             guard !text.isEmpty else { return ("Nothing to type.", nil) }
             let field = ControlsReader.focusedField()
-            if field.secure {
-                return ("That's a password field. Ask the user to type it themselves.", nil)
-            }
+            if let refusal = Self.typingRefusal(field) { return (refusal, nil) }
             if let frame = field.frame, CGRect(origin: .zero, size: screenSize).intersects(frame), frame.height < screenSize.height * 0.6 {
                 await fly(to: CGPoint(x: frame.minX + min(28, frame.width * 0.2), y: frame.maxY + 2))
             } else if engine.isHome {
                 overlay.mode = .docked
             }
+            guard !Task.isCancelled else { return stoppedResult }
             await ComputerControl.type(text) { chunk in view.typedEffect(chunk) }
+            guard !Task.isCancelled else { return stoppedResult }
             if args["press_return"] as? Bool ?? false {
                 try? await Task.sleep(for: .milliseconds(120))
                 _ = try? ComputerControl.press("return")
@@ -379,14 +424,16 @@ final class RealtimeHost {
 
         case "press_keys":
             let keys = (args["keys"] as? String ?? "").trimmingCharacters(in: .whitespaces)
-            let normalized = keys.lowercased().replacingOccurrences(of: " ", with: "")
-                .replacingOccurrences(of: "command", with: "cmd").replacingOccurrences(of: "alt", with: "option")
-            if Self.refusedShortcuts.contains(normalized) {
-                return ("I won't press that one (it logs out, locks or force-quits). Ask the user to do it.", nil)
-            }
-            if engine.isHome { overlay.mode = .docked }
             do {
-                let label = try ComputerControl.press(keys)
+                let shortcut = try ComputerControl.parse(keys)
+                if ComputerControl.isRefused(shortcut) { throw ComputerControl.ControlError.refusedShortcut(shortcut.label) }
+                // Keys that type are held to the same password-field rule as type_text.
+                if shortcut.insertsText, let refusal = Self.typingRefusal(ControlsReader.focusedField()) {
+                    return (refusal, nil)
+                }
+                guard !Task.isCancelled else { return stoppedResult }
+                if engine.isHome { overlay.mode = .docked }
+                let label = try ComputerControl.press(shortcut)
                 view.bubble(label)
             } catch {
                 return (error.localizedDescription, nil)
@@ -410,9 +457,11 @@ final class RealtimeHost {
             }()
             let saved = ComputerControl.mouseLocation
             await fly(to: point)
+            guard !Task.isCancelled else { return stoppedResult }
             view.bubble(arrow)
             await ComputerControl.scroll(dx: dx, dy: dy, at: point)
             ComputerControl.warp(to: saved)
+            guard !Task.isCancelled else { return stoppedResult }
             try? await Task.sleep(for: .milliseconds(280))
             return await look(prefix: "Scrolled \(direction).")
 
@@ -423,29 +472,36 @@ final class RealtimeHost {
             }
             let saved = ComputerControl.mouseLocation
             await fly(to: from.point)
+            guard !Task.isCancelled else { return stoppedResult }
             engine.press(depth: 0.1)
             ComputerControl.dragBegin(at: from.point)
+            dragInProgress = true
             try? await Task.sleep(for: .milliseconds(120))
             engine.dragging = true
             overlay.mode = .pinned(to.point)
             try? await Task.sleep(for: .milliseconds(40))
             // The real drag follows the animated cursor, so what you see is what happens.
-            while engine.timeToArrive(CACurrentMediaTime()) > 0 {
+            while engine.timeToArrive(CACurrentMediaTime()) > 0, !Task.isCancelled {
                 ComputerControl.dragMove(to: engine.tip)
                 try? await Task.sleep(for: .milliseconds(16))
             }
-            ComputerControl.dragMove(to: to.point)
-            try? await Task.sleep(for: .milliseconds(80))
-            ComputerControl.dragEnd(at: to.point)
+            if !Task.isCancelled {
+                ComputerControl.dragMove(to: to.point)
+                try? await Task.sleep(for: .milliseconds(80))
+            }
+            // Let go of the button wherever the drag got to if it was stopped (a stop may have done it already).
+            releaseDrag(at: Task.isCancelled ? ComputerControl.mouseLocation : to.point)
             engine.dragging = false
             try? await Task.sleep(for: .milliseconds(60))
             ComputerControl.warp(to: saved)
+            guard !Task.isCancelled else { return stoppedResult }
             try? await Task.sleep(for: .milliseconds(280))
             return await look(prefix: "Dragged it.")
 
         case "open_app":
             let name = (args["name"] as? String ?? "").trimmingCharacters(in: .whitespaces)
             guard !name.isEmpty else { return ("Which app?", nil) }
+            guard !Task.isCancelled else { return stoppedResult }
             if engine.isHome { overlay.mode = .docked }
             view.bubble("Opening \(name)")
             let result = await ComputerControl.openApp(name)
@@ -454,6 +510,7 @@ final class RealtimeHost {
 
         case "open_url":
             let url = (args["url"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            guard !Task.isCancelled else { return stoppedResult }
             if engine.isHome { overlay.mode = .docked }
             let result = ComputerControl.openURL(url)
             view.bubble(result.hasPrefix("Opened ") ? String(result.dropFirst(7).dropLast()) : "Hmm")
