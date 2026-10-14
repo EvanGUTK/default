@@ -5,6 +5,9 @@ import Network
 /// what a "face update" looks like, and how lines of JSON travel over TCP.
 public enum GooglyService {
     public static let type = "_googly._tcp"
+    /// Version of the packet vocabulary below. Sent as `proto` in each side's `hello`; bump it when
+    /// a change would make an older peer misread a packet (adding optional fields does not need it).
+    public static let protocolVersion = 1
 }
 
 public enum Mood: String, Codable, CaseIterable, Sendable {
@@ -30,40 +33,95 @@ public struct FaceState: Codable, Equatable, Sendable {
     }
 }
 
+/// The request and event names that travel in `Packet.command`.
+///
+/// Requests from the phone are answered by the Mac with the same `callID`. The replies to
+/// `realtimeToken` and `notes` reuse the request's name; the others get their own.
+public enum Command: String, CaseIterable, Sendable {
+    // Mac → phone
+    /// Wake him up, as if the phone were double tapped.
+    case wake
+    /// Put him to sleep.
+    case sleep
+
+    // Phone → Mac, answered with the same `callID`
+    /// Ask for a Realtime client secret. Reply: `realtimeToken` with the secret in `text`.
+    case realtimeToken
+    /// Transcribe a recorded chunk (`audio` base64 AAC, `text` metadata JSON). Reply: `transcribed`.
+    case transcribe
+    /// Save the session transcripts as notes files (`text` JSON). Reply: `notes` with the folder path in `text`.
+    case notes
+    /// Run a tool (`tool` name, `text` JSON arguments). Reply: `toolResult` with `text` and maybe `image`.
+    case tool
+
+    // Phone → Mac, no reply
+    /// His reply, streaming in (`text` so far).
+    case caption
+    /// His reply is complete (`text` is all of it).
+    case captionDone
+    /// The Realtime session is up.
+    case awake
+    /// The Realtime session ended.
+    case asleep
+
+    // Mac → phone, replies
+    case toolResult
+    case transcribed
+}
+
+/// One line of JSON on the wire. Every field is optional and unknown keys are ignored, so the two
+/// apps can add fields without breaking an older peer.
 public struct Packet: Codable, Sendable {
+    /// What the phone should show right now (Mac → phone).
     public var face: FaceState?
     /// Sent once by each side after connecting, with a device name.
     public var hello: String?
-    /// Voice volume 0…1. The Mac shares it, the phone sets it.
-    public var volume: Double?
-    /// A request or event: "testVoice" (phone→Mac), "playing"/"done" (phone→Mac), "stopSpeech" (Mac→phone).
+    /// Version of the packet vocabulary (`GooglyService.protocolVersion`). Sent with `hello`;
+    /// nil from a peer that predates it.
+    public var proto: Int?
+    /// What this packet is or asks for. Kept as the raw string so a name from a newer peer still
+    /// decodes; read it through `kind`, or write it with `Packet(command: .wake)`.
     public var command: String?
-    /// Speech audio (mp3, base64) for the phone to play.
+    /// AAC audio (base64) for `transcribe`.
     public var audio: String?
-    /// Which speech an audio packet or a playing/done event belongs to.
-    public var speech: Int?
-    /// Pairs a request with its reply (tool calls, realtime tokens).
+    /// Pairs a request with its reply.
     public var callID: String?
-    /// Tool name for a "tool" request.
+    /// Tool name for a `tool` request.
     public var tool: String?
-    /// Free text: tool arguments or output, a token, a caption.
+    /// Free text: tool arguments or output, a token, a caption, notes JSON.
     public var text: String?
     /// A JPEG (base64) that goes with a tool result.
     public var image: String?
+    /// Set on a reply when the request failed, so a failure can be told apart from an empty
+    /// success (`text == nil`). Nil means no error.
+    public var error: String?
 
-    public init(face: FaceState? = nil, hello: String? = nil, volume: Double? = nil, command: String? = nil,
-                audio: String? = nil, speech: Int? = nil, callID: String? = nil, tool: String? = nil,
-                text: String? = nil, image: String? = nil) {
+    public init(face: FaceState? = nil, hello: String? = nil, proto: Int? = nil, command: String? = nil,
+                audio: String? = nil, callID: String? = nil, tool: String? = nil,
+                text: String? = nil, image: String? = nil, error: String? = nil) {
         self.face = face
         self.hello = hello
-        self.volume = volume
+        // A hello always says which vocabulary it speaks, even from callers that don't pass `proto`.
+        self.proto = proto ?? (hello != nil ? GooglyService.protocolVersion : nil)
         self.command = command
         self.audio = audio
-        self.speech = speech
         self.callID = callID
         self.tool = tool
         self.text = text
         self.image = image
+        self.error = error
+    }
+
+    /// Same as the main initializer, with the command as a `Command`.
+    public init(command: Command, audio: String? = nil, callID: String? = nil, tool: String? = nil,
+                text: String? = nil, image: String? = nil, error: String? = nil) {
+        self.init(command: command.rawValue, audio: audio, callID: callID, tool: tool,
+                  text: text, image: image, error: error)
+    }
+
+    /// `command` as a `Command`, or nil when there is none or this build doesn't know the name.
+    public var kind: Command? {
+        command.flatMap(Command.init(rawValue:))
     }
 }
 
