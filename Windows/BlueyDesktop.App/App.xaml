@@ -1,9 +1,9 @@
-﻿<Application x:Class="BlueyDesktop.App.App"
+<Application x:Class="BlueyDesktop.App.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:BlueyDesktop.App"
-             StartupUri="MainWindow.xaml">
+             xmlns:local="clr-namespace:BlueyDesktop.App">
+    <!-- No StartupUri: App.OnStartup loads the settings first, then creates the window and the tray icon. -->
     <Application.Resources>
-         
+
     </Application.Resources>
 </Application>
