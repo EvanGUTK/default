@@ -13,10 +13,10 @@
         </ContextMenu>
     </Window.ContextMenu>
 
-    <!-- A fully transparent pixel lets the click through to whatever is behind him, so the whole window is
-         covered by a background one step above transparent (alpha 1 of 255): invisible, but he can be grabbed
-         and dragged from anywhere in his 160 × 160. -->
-    <Grid Background="#01000000">
+    <!-- No background fill on purpose. Windows hit-tests a layered window by pixel: a fully transparent pixel
+         lets the click through to whatever is behind him, and only what is actually drawn (the blob and his
+         crown) can be grabbed and dragged. -->
+    <Grid>
         <local:BlueyCharacter/>
     </Grid>
 </Window>
