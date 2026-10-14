@@ -19,8 +19,9 @@ final class RealtimeHost {
     private var toolTasks: [UUID: Task<Void, Never>] = [:]
     /// True between a drag's mouse-down and mouse-up, so a stop can let go of the button.
     private var dragInProgress = false
-    /// After the stop hotkey, his actions are refused for a few seconds.
-    private var stoppedUntil = 0.0
+    /// Set by the stop hotkey. His actions then stay off until the user switches "Let Him Use the Computer"
+    /// back on in the menu (which also clears this the next time an action is asked for).
+    private var stoppedByUser = false
     /// True while he's awake and talking with you (false = follow mode).
     private(set) var awake = false
     var onChange: (() -> Void)?
@@ -157,9 +158,11 @@ final class RealtimeHost {
     }
 
     /// The stop hotkey: cancel every tool call (the running one stops at its next step, the waiting ones never
-    /// start), let go of the mouse button, refuse further actions for a moment and bring the cursor home.
+    /// start), let go of the mouse button, bring the cursor home and switch computer control off. It stays off
+    /// (across relaunches too) until the user turns "Let Him Use the Computer" back on in the menu.
     func stopActions() {
-        stoppedUntil = CACurrentMediaTime() + 6
+        stoppedByUser = true
+        Settings.shared.computerControl = false
         for task in toolTasks.values { task.cancel() }
         queue = []
         releaseDrag()
@@ -345,11 +348,9 @@ final class RealtimeHost {
 
     private func actionRefusal() -> String? {
         if !Settings.shared.computerControl {
-            return "The user has turned off computer control in the menu bar. You can still look and point."
+            return stoppedByUser ? Self.stoppedText : "The user has turned off computer control in the menu bar. You can still look and point."
         }
-        if CACurrentMediaTime() < stoppedUntil {
-            return Self.stoppedText
-        }
+        stoppedByUser = false  // they switched it back on
         if !ComputerControl.isTrusted {
             ComputerControl.askForPermission()
             return ComputerControl.ControlError.notTrusted.localizedDescription
@@ -358,7 +359,7 @@ final class RealtimeHost {
     }
 
     /// What he's told when the user stopped him (also the answer to every call the stop cancelled).
-    private static let stoppedText = "The user pressed stop. Don't do anything else until they ask again."
+    private static let stoppedText = "The user pressed stop, which switched computer control off. Don't use the computer again until they switch it back on in the menu bar. You can still look and point."
 
     private var stoppedResult: (text: String, image: String?) { (Self.stoppedText, nil) }
 

@@ -20,14 +20,30 @@ enum MeetingNotes {
 
     // MARK: Folders
 
-    /// The session's folder, made the first time it's needed.
-    static func folder(session: String, started: Date) -> URL {
+    enum SessionError: LocalizedError {
+        case badSessionID
+        var errorDescription: String? { "That isn't a valid session id." }
+    }
+
+    /// Session ids come from the phone (UUID strings). Only plain ids pass: 8 to 64 ASCII letters, digits
+    /// and dashes. Anything else (slashes, dots, spaces, too short) is refused rather than cleaned up, so a
+    /// bad id can't pick another session's folder or point outside the notes folder.
+    private static func isPlainID(_ session: String) -> Bool {
+        (8...64).contains(session.count) && session.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
+    }
+
+    /// The session's folder, made the first time it's needed. Throws for an id that isn't plain.
+    static func folder(session: String, started: Date) throws -> URL {
+        guard isPlainID(session) else {
+            NSLog("Googly: refusing notes session id \(String(session.prefix(16)).debugDescription) (\(session.count) characters)")
+            throw SessionError.badSessionID
+        }
         let fm = FileManager.default
         try? fm.createDirectory(at: root, withIntermediateDirectories: true)
         writeReadmeIfNeeded()
         let tag = String(session.prefix(8)).lowercased()
         if let existing = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil))?
-            .first(where: { $0.lastPathComponent.hasSuffix(tag) }) {
+            .first(where: { $0.lastPathComponent.hasSuffix(" " + tag) }) {
             return existing
         }
         let name = DateFormatter.folderName.string(from: started) + " " + tag
@@ -62,7 +78,7 @@ enum MeetingNotes {
 
     /// Saves the chunk's audio into the session folder and transcribes it.
     static func transcribe(audio: Data, session: String, index: Int, sessionStarted: Date) async throws -> (segments: [Segment], folder: URL) {
-        let folder = folder(session: session, started: sessionStarted)
+        let folder = try folder(session: session, started: sessionStarted)
         let audioURL = folder.appendingPathComponent("audio", isDirectory: true)
         try? FileManager.default.createDirectory(at: audioURL, withIntermediateDirectories: true)
         try audio.write(to: audioURL.appendingPathComponent(String(format: "chunk-%03d.m4a", index)))
@@ -130,12 +146,12 @@ enum MeetingNotes {
     static func write(session json: [String: Any]) -> URL? {
         guard let id = json["id"] as? String, let startedAt = json["started"] as? Double else { return nil }
         let started = Date(timeIntervalSince1970: startedAt)
-        let folder = folder(session: id, started: started)
+        guard let dir = try? folder(session: id, started: started) else { return nil }
         if let data = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
-            try? data.write(to: folder.appendingPathComponent("session.json"), options: .atomic)
+            try? data.write(to: dir.appendingPathComponent("session.json"), options: .atomic)
         }
-        try? markdown(json, started: started).write(to: folder.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8)
-        return folder
+        try? markdown(json, started: started).write(to: dir.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8)
+        return dir
     }
 
     private static func markdown(_ json: [String: Any], started: Date) -> String {
