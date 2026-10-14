@@ -11,6 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\BlueyDesktop.Core\BlueyDesktop.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Include="..\BlueyDesktop.App\Engine\**\*.cs" Link="Engine\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 

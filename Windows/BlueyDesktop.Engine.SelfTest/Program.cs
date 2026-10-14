@@ -11,6 +11,16 @@ using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using BlueyDesktop.Engine;
+using BlueyDesktop.Engine.SelfTest;
+
+// `--live-openai [settings folder]` is the only mode that leaves this machine: it opens a real Realtime
+// connection with your key, waits for the first event and closes. Nothing else here touches the network.
+if (args.Contains("--live-openai"))
+{
+    var settingsDirectory = args.SkipWhile(argument => argument != "--live-openai").Skip(1).FirstOrDefault() ?? AppContext.BaseDirectory;
+    await RealtimeChecks.RunLiveAsync(settingsDirectory);
+    return 0;
+}
 
 var passes = 0;
 var failures = 0;
@@ -354,6 +364,8 @@ Section("real: Ctrl+Alt+S stop hotkey end to end");
     Check("the combination is free again after Dispose", again is not null, $"error {againError}");
     again?.Dispose();
 }
+
+await RealtimeChecks.RunAsync(Check, Section);
 
 Console.WriteLine($"\n{passes} passed, {failures} failed");
 return failures == 0 ? 0 : 1;
