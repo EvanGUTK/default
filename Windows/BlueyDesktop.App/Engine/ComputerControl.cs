@@ -47,6 +47,7 @@ public sealed class ComputerControl : IDisposable
     private const int ScrollStep = 40;
     private const int LongTextLength = 160;
     private const int LongTextChunk = 6;
+    private const int FocusRecheckInterval = 50;
     private static readonly TimeSpan ScrollPause = TimeSpan.FromMilliseconds(16);
     private static readonly TimeSpan MoveSettle = TimeSpan.FromMilliseconds(30);
     private static readonly TimeSpan ClickHold = TimeSpan.FromMilliseconds(35);
@@ -245,6 +246,16 @@ public sealed class ComputerControl : IDisposable
             var runes = text.EnumerateRunes().ToList();
             var chunk = new StringBuilder();
             var chunkRunes = 0;
+            var typedSinceCheck = 0;
+
+            // Focus can move while typing: a Tab or Enter in the text lands in the next field (maybe a password
+            // box), and a popup can take focus. So it is checked again after those and every so often.
+            async Task<string?> RecheckFocusAsync()
+            {
+                typedSinceCheck = 0;
+                var refusal = FocusGuard.Refusal(await _focusCheck(token));
+                return refusal is null ? null : $"I stopped typing partway because the focus moved. {refusal}";
+            }
 
             async Task<bool> FlushAsync()
             {
@@ -268,11 +279,15 @@ public sealed class ComputerControl : IDisposable
                     var key = rune.Value == '\t' ? Vk.Tab : Vk.Return;
                     if (!_driver.Chord(new Shortcut(KeyModifiers.None, key, ""))) return ControlResult.Refused(BlockedMessage);
                     await Task.Delay(pause, token);
+                    if (i + 1 < runes.Count && await RecheckFocusAsync() is { } moved) return ControlResult.Refused(moved);
                     continue;
                 }
                 chunk.Append(rune.ToString());
                 chunkRunes++;
+                typedSinceCheck++;
                 if (chunkRunes >= chunkSize && !await FlushAsync()) return ControlResult.Refused(BlockedMessage);
+                if (typedSinceCheck >= FocusRecheckInterval && i + 1 < runes.Count && await RecheckFocusAsync() is { } changed)
+                    return ControlResult.Refused(changed);
             }
             if (!await FlushAsync()) return ControlResult.Refused(BlockedMessage);
 

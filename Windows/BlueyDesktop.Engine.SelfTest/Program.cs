@@ -40,6 +40,12 @@ ComputerControl Make(FakeDriver driver, FocusKind focus = FocusKind.Ordinary, Fo
         },
         () => foreground ?? Notepad());
 
+// Answers the focus check from a list, one answer per lookup; the last answer repeats.
+ComputerControl MakeSequence(FakeDriver driver, int[] lookups, params FocusKind[] sequence) =>
+    new(driver,
+        _ => Task.FromResult(sequence[Math.Min(Interlocked.Increment(ref lookups[0]) - 1, sequence.Length - 1)]),
+        Notepad);
+
 // ---------------------------------------------------------------------------------------------------------
 Section("parser: aliases and modifier order");
 Check("ctrl+alt+s written four ways is one chord",
@@ -196,6 +202,35 @@ Section("ComputerControl: press keys");
     Check("alt+f4 on the desktop is refused and not sent", !f4.Result.Succeeded && f4.Driver.Snapshot().Length == 0);
     var f4ok = await Press("alt+f4", FocusKind.Ordinary, Notepad());
     Check("alt+f4 on an ordinary app is sent", f4ok.Result.Succeeded && f4ok.Driver.Snapshot().Length == 1);
+}
+
+Section("ComputerControl: focus moves while typing");
+{
+    var driver = new FakeDriver();
+    var lookups = new int[1];
+    var control = MakeSequence(driver, lookups, FocusKind.Ordinary, FocusKind.Secure);
+    control.Enable();
+    var result = await control.TypeTextAsync("user\tsecret");
+    Check("a Tab that lands in a password field stops the typing", !result.Succeeded && driver.Typed.ToString() == "user" && result.Message.Contains("focus moved"), $"typed '{driver.Typed}': {result.Message}");
+
+    driver = new FakeDriver();
+    control = MakeSequence(driver, new int[1], FocusKind.Ordinary, FocusKind.Secure);
+    control.Enable();
+    result = await control.TypeTextAsync("a\nb");
+    Check("so does a newline", !result.Succeeded && driver.Typed.ToString() == "a", $"typed '{driver.Typed}'");
+
+    driver = new FakeDriver();
+    control = MakeSequence(driver, new int[1], FocusKind.Ordinary, FocusKind.Ordinary, FocusKind.Unknown);
+    control.Enable();
+    result = await control.TypeTextAsync(new string('x', 120));
+    Check("a long text is re-checked as it goes and stops when focus can't be read", !result.Succeeded && driver.Typed.Length >= 50 && driver.Typed.Length < 120, $"typed {driver.Typed.Length} of 120");
+
+    driver = new FakeDriver();
+    lookups = new int[1];
+    control = MakeSequence(driver, lookups, FocusKind.Ordinary);
+    control.Enable();
+    result = await control.TypeTextAsync("done\n");
+    Check("no extra lookup after the last character", result.Succeeded && lookups[0] == 1, $"{lookups[0]} lookups");
 }
 
 Section("ComputerControl: stop latches");
