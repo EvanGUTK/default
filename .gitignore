@@ -8,3 +8,6 @@ xcuserdata/
 Secrets.xcconfig
 *.env
 .env*
+
+# Your own signing team (see Config/Local.xcconfig.example)
+Config/Local.xcconfig

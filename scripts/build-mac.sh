@@ -13,6 +13,13 @@ APP="$STAGE/Bluey.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$(swift build -c release --show-bin-path)/GooglyMac" "$APP/Contents/MacOS/GooglyMac"
 cp Mac/Info.plist "$APP/Contents/Info.plist"
+
+# The version comes from Config/Shared.xcconfig, the same file the iPhone project uses.
+read_setting() { sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" Config/Shared.xcconfig | head -1 | tr -d '[:space:]'; }
+VERSION=$(read_setting MARKETING_VERSION)
+BUILD=$(read_setting CURRENT_PROJECT_VERSION)
+[[ -n "$VERSION" && -n "$BUILD" ]] || { echo "MARKETING_VERSION or CURRENT_PROJECT_VERSION missing in Config/Shared.xcconfig" >&2; exit 1; }
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" -c "Set :CFBundleVersion $BUILD" "$APP/Contents/Info.plist"
 cp Shared/Fonts/*.ttf "$APP/Contents/Resources/"
 
 # Sign with your Apple Development certificate when there is one, so macOS remembers the

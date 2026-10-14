@@ -1,0 +1,8 @@
+// One place for the version and the signing team. The Xcode project (project.yml) reads this
+// file, and scripts/build-mac.sh stamps the same version into the Mac app.
+MARKETING_VERSION = 0.1
+CURRENT_PROJECT_VERSION = 1
+
+// Your own Apple signing team lives in Config/Local.xcconfig, which is git-ignored.
+// Copy Config/Local.xcconfig.example to Config/Local.xcconfig and fill in your team ID.
+#include? "Local.xcconfig"

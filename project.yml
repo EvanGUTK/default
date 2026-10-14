@@ -3,11 +3,14 @@ options:
   bundleIdPrefix: co.visionairy.googly
   deploymentTarget:
     iOS: "17.0"
+# MARKETING_VERSION, CURRENT_PROJECT_VERSION and DEVELOPMENT_TEAM come from Config/Shared.xcconfig
+# (the team from the git-ignored Config/Local.xcconfig; see Config/Local.xcconfig.example).
+configFiles:
+  Debug: Config/Shared.xcconfig
+  Release: Config/Shared.xcconfig
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1"
-    CURRENT_PROJECT_VERSION: "1"
 targets:
   GooglyEyes:
     type: application
@@ -22,12 +25,12 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: NF73NSV867
-        # Set your team in Xcode (Signing & Capabilities) the first time you run it.
     info:
       path: iOS/Info.plist
       properties:
         CFBundleDisplayName: Bluey
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         UIStatusBarHidden: true
