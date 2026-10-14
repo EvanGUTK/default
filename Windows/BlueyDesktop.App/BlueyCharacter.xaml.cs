@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -21,6 +22,8 @@ public partial class BlueyCharacter : UserControl
     private static readonly TimeSpan FrameInterval = TimeSpan.FromSeconds(0.028);
 
     private static readonly Rect BodyBounds = new(12, 44, 820, 700);
+    /// <summary>Halfway between his eyes, in the stage's design space. The cursor is measured from here.</summary>
+    private static readonly Point EyesMidpoint = new(422, 201);
 
     private readonly IdleAnimator _animator = new();
     private readonly Stopwatch _clock = new();
@@ -57,7 +60,7 @@ public partial class BlueyCharacter : UserControl
         if (renderingTime - _lastStep < FrameInterval) return;
         _lastStep = renderingTime;
 
-        var frame = _animator.Step(_clock.Elapsed.TotalSeconds);
+        var frame = _animator.Step(_clock.Elapsed.TotalSeconds, ReadCursorOffset());
 
         // Whole-body motion: breathing, hops, and leaning toward where he looks.
         var stretch = 1 + Math.Clamp(frame.Hop / HopPerStretch, -MaxStretch, MaxStretch);
@@ -69,6 +72,34 @@ public partial class BlueyCharacter : UserControl
         var open = Math.Max(MinEyeOpen, 1 - frame.Closed);
         _leftEye.Update(frame.GazeX, frame.GazeY, open);
         _rightEye.Update(frame.GazeX, frame.GazeY, open);
+    }
+
+    /// <summary>The real mouse cursor relative to his eyes, in device-independent px, or null if it can't be read.</summary>
+    private IdleAnimator.CursorOffset? ReadCursorOffset()
+    {
+        // The cursor can be unreadable (secure desktop, locked screen); he just goes back to wandering then.
+        if (!NativeCursor.TryGet(out var cursor) || PresentationSource.FromVisual(Stage) is null) return null;
+
+        // PointToScreen and GetCursorPos are both in device pixels; Stage doesn't move with his bobbing.
+        var eyes = Stage.PointToScreen(EyesMidpoint);
+        var scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        return new IdleAnimator.CursorOffset((cursor.X - eyes.X) / scale, (cursor.Y - eyes.Y) / scale);
+    }
+
+    private static class NativeCursor
+    {
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CursorPoint
+        {
+            public int X;
+            public int Y;
+        }
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetCursorPos(out CursorPoint point);
+
+        public static bool TryGet(out CursorPoint point) => GetCursorPos(out point);
     }
 
     /// <summary>

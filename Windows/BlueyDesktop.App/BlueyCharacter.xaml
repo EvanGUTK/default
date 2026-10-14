@@ -4,7 +4,7 @@
     <!-- Drawn in the same 844-wide design space as iOS/Sources/FaceView.swift; the Viewbox scales it to the window.
          Colors are Shared/Palette.swift: berry1…4 A9BCFF 6C86F5 4254D6 2B2F8F, nose 1C1F66, ink 17151F. -->
     <Viewbox Stretch="Uniform">
-        <Canvas Width="844" Height="780">
+        <Canvas x:Name="Stage" Width="844" Height="780">
             <!-- The whole body breathes, hops and leans together. Pivot: bottom middle of the blob. -->
             <Canvas x:Name="Body" Width="844" Height="780">
                 <Canvas.RenderTransform>
