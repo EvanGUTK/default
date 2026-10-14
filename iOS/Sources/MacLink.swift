@@ -17,6 +17,8 @@ final class MacLink: ObservableObject {
     @Published private(set) var preferredMac: String? = UserDefaults.standard.string(forKey: "preferredMac")
     /// Commands from the Mac, like "wake" and "sleep".
     var onCommand: ((String) -> Void)?
+    /// How long a request may wait for the Mac. Above the Mac's slowest tool (web research, about 90 s).
+    static let requestTimeout: TimeInterval = 120
     private var waiting: [String: (Packet?) -> Void] = [:]
 
     var onFace: ((FaceState) -> Void)?
@@ -51,6 +53,15 @@ final class MacLink: ObservableObject {
         link?.cancel()
         link = nil
         connected = false
+        // The cancelled link's callback is ignored once `link` is nil, so fail the waiting requests here.
+        failWaiting()
+    }
+
+    /// Calls every request that is still waiting for the Mac with nil, so nothing waits forever.
+    private func failWaiting() {
+        let pending = waiting
+        waiting = [:]
+        pending.values.forEach { $0(nil) }
     }
 
     private func restart() {
@@ -94,9 +105,7 @@ final class MacLink: ObservableObject {
                 link.send(Packet(hello: Self.deviceName))
             case .failed, .cancelled:
                 self.connected = false
-                let waiting = self.waiting
-                self.waiting = [:]
-                waiting.values.forEach { $0(nil) }
+                self.failWaiting()
                 self.macName = nil
                 self.link = nil
                 self.scheduleRetry()
@@ -110,8 +119,9 @@ final class MacLink: ObservableObject {
             if let name = packet.hello { self?.macName = name }
             if let face = packet.face { self?.onFace?(face) }
             guard let self, let command = packet.command else { return }
-            if let callID = packet.callID, let done = self.waiting.removeValue(forKey: callID) {
-                done(packet)
+            if let callID = packet.callID {
+                // A reply. One that arrives after its request timed out is dropped, never run as a command.
+                self.waiting.removeValue(forKey: callID)?(packet)
             } else {
                 self.onCommand?(command)
             }
@@ -124,14 +134,20 @@ final class MacLink: ObservableObject {
         link?.send(packet)
     }
 
-    /// Sends a request to the Mac and calls back with its reply (nil if the Mac went away).
-    func request(_ packet: Packet, _ done: @escaping (Packet?) -> Void) {
+    /// Sends a request to the Mac and calls back with its reply (nil if the Mac went away or took longer than `timeout`).
+    func request(_ packet: Packet, timeout: TimeInterval = MacLink.requestTimeout, _ done: @escaping (Packet?) -> Void) {
         guard let link, connected else { done(nil); return }
         var packet = packet
         let id = UUID().uuidString
         packet.callID = id
         waiting[id] = done
         link.send(packet)
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+            // Already answered or failed: nothing is left under this id.
+            guard let done = self?.waiting.removeValue(forKey: id) else { return }
+            NSLog("Googly request \(packet.command ?? "?") timed out after \(Int(timeout)) s")
+            done(nil)
+        }
     }
 
     private static var deviceName: String {
