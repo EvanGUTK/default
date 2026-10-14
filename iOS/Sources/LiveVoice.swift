@@ -1,5 +1,8 @@
 import AVFoundation
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// A live session with OpenAI's Realtime API, running on the phone. Once he's awake the mic is on the whole
 /// time, so everything you say becomes context, but he stays quiet until you hold the screen and ask.
@@ -9,6 +12,9 @@ final class LiveVoice: NSObject, ObservableObject {
     enum State: Equatable { case asleep, waking, listening, asking, thinking, speaking }
 
     @Published private(set) var state: State = .asleep
+    /// True while the mic isn't reaching him (a call or another app has the audio, or it couldn't be restarted),
+    /// so the UI never claims he's listening when he isn't. Cleared as soon as the mic is back.
+    @Published private(set) var micPaused = false
 
     static let model = "gpt-realtime-2.1"
 
@@ -48,12 +54,26 @@ final class LiveVoice: NSObject, ObservableObject {
     }
 
     private var socket: URLSessionWebSocketTask?
-    private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
+    // Both are replaced after the system restarts its audio services (see recoverAudio).
+    private var engine = AVAudioEngine()
+    private var player = AVAudioPlayerNode()
+    /// Mic → wire format. Built on the main queue, used on the audio thread, so always touched under the lock.
     private var converter: AVAudioConverter?
+    private let converterLock = NSLock()
     private let wireFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: true)!
     private let playFormat = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1)!
     private var audioReady = false
+
+    // Audio recovery (see "Audio recovery" below).
+    private static let maxRecoveryAttempts = 10
+    /// A restart can itself post one more route or engine notification; ignore those for this long.
+    private static let recoverySettleTime: TimeInterval = 1.5
+    /// True while the audio engine is supposed to be running (from the first start until sleep).
+    private var audioActive = false
+    private var audioObservers: [NSObjectProtocol] = []
+    private var audioRecoveryWork: DispatchWorkItem?
+    private var needsFullRebuild = false
+    private var lastAudioRecovery = Date.distantPast
 
     private var transcript = ""
     private var pendingBuffers = 0
@@ -375,7 +395,7 @@ final class LiveVoice: NSObject, ObservableObject {
         }
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
-        converter = AVAudioConverter(from: inputFormat, to: wireFormat)
+        rebuildConverter(for: inputFormat)
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 2400, format: inputFormat) { [weak self] buffer, _ in
             self?.recorder.append(buffer)
@@ -385,19 +405,47 @@ final class LiveVoice: NSObject, ObservableObject {
         engine.prepare()
         try engine.start()
         player.play()
+        audioActive = true
+        registerAudioObservers()
     }
 
     private func stopAudio() {
-        engine.inputNode.removeTap(onBus: 0)
-        player.stop()
-        engine.stop()
+        audioActive = false
+        audioRecoveryWork?.cancel()
+        audioRecoveryWork = nil
+        needsFullRebuild = false
+        removeAudioObservers()
+        setMicPaused(false)
+        teardownEngine()
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
     }
 
+    /// Stops the engine and player without giving up the audio session, so it can be started again.
+    private func teardownEngine() {
+        engine.inputNode.removeTap(onBus: 0)
+        player.stop()
+        engine.stop()
+    }
+
+    private func rebuildConverter(for format: AVAudioFormat) {
+        converterLock.lock()
+        defer { converterLock.unlock() }
+        converter = AVAudioConverter(from: format, to: wireFormat)
+    }
+
+    /// The converter for this buffer. If the mic's format changed under us (a headset, a route change),
+    /// it is rebuilt here rather than silently converting nothing.
+    private func micConverter(for format: AVAudioFormat) -> AVAudioConverter? {
+        converterLock.lock()
+        defer { converterLock.unlock() }
+        if converter?.inputFormat != format { converter = AVAudioConverter(from: format, to: wireFormat) }
+        return converter
+    }
+
     private func sendMic(_ buffer: AVAudioPCMBuffer) {
-        guard let converter else { return }
+        guard let converter = micConverter(for: buffer.format) else { return }
         let ratio = wireFormat.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 32)
         guard let out = AVAudioPCMBuffer(pcmFormat: wireFormat, frameCapacity: capacity) else { return }
@@ -414,6 +462,134 @@ final class LiveVoice: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.send(["type": "input_audio_buffer.append", "audio": data.base64EncodedString()])
         }
+    }
+
+    // MARK: Audio recovery
+
+    /// Things that can take the mic away mid-session: a call or Siri (interruption), a headset coming or going
+    /// (route change), the system restarting its audio (media services reset), or the app having been in the
+    /// background. Each one rebuilds the converter and restarts the engine; meanwhile `micPaused` says so.
+    private func registerAudioObservers() {
+        #if os(iOS)
+        guard audioObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        let session = AVAudioSession.sharedInstance()
+        audioObservers = [
+            center.addObserver(forName: AVAudioSession.interruptionNotification, object: session, queue: .main) { [weak self] note in
+                self?.handleInterruption(note)
+            },
+            center.addObserver(forName: AVAudioSession.routeChangeNotification, object: session, queue: .main) { [weak self] note in
+                self?.handleRouteChange(note)
+            },
+            center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: session, queue: .main) { [weak self] _ in
+                guard let self, self.audioActive else { return }
+                self.needsFullRebuild = true
+                self.scheduleAudioRecovery("media services reset")
+            },
+            center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { [weak self] note in
+                guard let self, (note.object as? AVAudioEngine) === self.engine else { return }
+                self.audioEnvironmentChanged("engine configuration change")
+            },
+            center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                // Back from the background (or a system alert): make sure the mic really came back.
+                guard let self, self.audioActive, self.micPaused || !self.engine.isRunning else { return }
+                self.scheduleAudioRecovery("app became active", delay: 0)
+            },
+        ]
+        #endif
+    }
+
+    private func removeAudioObservers() {
+        audioObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        audioObservers = []
+    }
+
+    private func handleInterruption(_ note: Notification) {
+        #if os(iOS)
+        guard audioActive,
+              let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        switch type {
+        case .began:
+            // The system has already stopped the engine. Don't try to restart it until the interruption ends.
+            audioRecoveryWork?.cancel()
+            audioRecoveryWork = nil
+            setMicPaused(true, saying: "Something has my microphone (a call?). I'll listen again when it's free.")
+        case .ended:
+            scheduleAudioRecovery("interruption ended")
+        @unknown default:
+            break
+        }
+        #endif
+    }
+
+    private func handleRouteChange(_ note: Notification) {
+        #if os(iOS)
+        guard audioActive,
+              let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
+        switch reason {
+        case .newDeviceAvailable, .oldDeviceUnavailable:
+            audioEnvironmentChanged("route change")
+        default:
+            break  // our own category changes and the like
+        }
+        #endif
+    }
+
+    private func audioEnvironmentChanged(_ reason: String) {
+        guard audioActive else { return }
+        if engine.isRunning, Date().timeIntervalSince(lastAudioRecovery) < Self.recoverySettleTime { return }
+        scheduleAudioRecovery(reason)
+    }
+
+    /// Debounced, because a headset change posts several notifications at once.
+    private func scheduleAudioRecovery(_ reason: String, delay: TimeInterval = 0.3, attempt: Int = 0) {
+        audioRecoveryWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.recoverAudio(reason, attempt: attempt) }
+        audioRecoveryWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func recoverAudio(_ reason: String, attempt: Int) {
+        audioRecoveryWork = nil
+        guard audioActive else { return }
+        NSLog("Googly audio recovery (\(reason)), attempt \(attempt + 1)")
+        if needsFullRebuild {
+            // Every audio object is invalid after a media services reset: start again from fresh ones.
+            engine = AVAudioEngine()
+            player = AVAudioPlayerNode()
+            audioReady = false
+            needsFullRebuild = false
+        } else {
+            teardownEngine()
+        }
+        do {
+            try startAudio()  // sets the session up again and rebuilds the converter and the mic tap
+        } catch {
+            NSLog("Googly audio recovery failed: \(error)")
+            setMicPaused(true, saying: "I can't get my microphone back yet. Still trying.")
+            if attempt + 1 < Self.maxRecoveryAttempts {
+                scheduleAudioRecovery(reason, delay: min(30, 2 + Double(attempt) * 3), attempt: attempt + 1)
+            } else {
+                // The app coming back to the foreground tries again; so does ending and restarting the session.
+                onCaption?("I couldn't get my microphone back. Double tap me to start over.", true)
+            }
+            return
+        }
+        lastAudioRecovery = Date()
+        // Chirps that were queued on the old player will never report back.
+        pendingBuffers = 0
+        level = 0
+        setMicPaused(false)
+        finishIfQuiet()
+    }
+
+    /// Flags the mic as paused or back. `message` is shown (as a caption on the Mac) only when it newly pauses.
+    private func setMicPaused(_ paused: Bool, saying message: String? = nil) {
+        guard paused != micPaused else { return }
+        micPaused = paused
+        if paused, let message { onCaption?(message, true) }
     }
 
     /// A tiny cartoon chirp: a few soft, round, bell-like notes from a happy pentatonic scale,

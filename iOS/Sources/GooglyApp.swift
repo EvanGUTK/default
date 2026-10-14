@@ -30,7 +30,7 @@ struct RootView: View {
                 .onTapGesture(count: 2) { live.toggle() }  // double tap: wake up / back to follow mode
                 .simultaneousGesture(holdToAsk)
 
-            ModeIndicator(state: live.state)
+            ModeIndicator(state: live.state, micPaused: live.micPaused)
 
             SoundButton(link: link, live: live)
 
@@ -170,6 +170,9 @@ struct RootView: View {
 /// plus a small label in the corner. Following your mouse is just a little eye icon. No glows.
 struct ModeIndicator: View {
     let state: LiveVoice.State
+    /// The mic isn't reaching him (a call, a headset change, an audio restart). Shown in place of the usual
+    /// mode, so the screen never says he's listening when he isn't.
+    var micPaused = false
 
     private struct Look {
         let color: Color
@@ -180,8 +183,12 @@ struct ModeIndicator: View {
     }
 
     private static let blue = Color(hex: 0x4F8BFF)
+    private static let amber = Color(hex: 0xFFA05C)
 
     private var look: Look {
+        if micPaused && state != .asleep {
+            return Look(color: Self.amber, label: "Mic paused", icon: "mic.slash.fill", border: 10, pulse: 1.0)
+        }
         switch state {
         case .asleep:    return Look(color: Color(hex: Palette.inkSoft), label: nil, icon: "eye.fill", border: 0, pulse: 0)
         case .waking:    return Look(color: Color(hex: 0xFFD66B), label: "Waking up", icon: "sun.max.fill", border: 6, pulse: 1.6)
@@ -229,6 +236,7 @@ struct ModeIndicator: View {
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .animation(.easeInOut(duration: 0.25), value: state)
+        .animation(.easeInOut(duration: 0.25), value: micPaused)
     }
 }
 
