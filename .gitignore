@@ -15,3 +15,6 @@ Config/Local.xcconfig
 # .NET / Windows build outputs
 Windows/**/bin/
 Windows/**/obj/
+
+# Your OpenAI key for the Windows app (see Windows/BlueyDesktop.App/appsettings.Local.json.example)
+Windows/**/appsettings.Local.json

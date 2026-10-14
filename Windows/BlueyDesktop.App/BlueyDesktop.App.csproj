@@ -1,5 +1,22 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <ItemGroup>
+    <ProjectReference Include="..\BlueyDesktop.Core\BlueyDesktop.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Tray icon. H.NotifyIcon over Hardcodet.NotifyIcon.Wpf: MIT, actively released (2.4.1), and ships a
+         net10.0-windows build; Hardcodet is older and has no .NET 10 target. -->
+    <PackageReference Include="H.NotifyIcon.Wpf" Version="2.4.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Config copied next to the exe for SettingsLoader. appsettings.Local.json is git-ignored (your key);
+         the Update is a no-op when the file does not exist. -->
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="appsettings.Local.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
