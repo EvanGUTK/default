@@ -1,0 +1,76 @@
+<UserControl x:Class="BlueyDesktop.App.BlueyCharacter"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Drawn in the same 844-wide design space as iOS/Sources/FaceView.swift; the Viewbox scales it to the window.
+         Colors are Shared/Palette.swift: berry1…4 A9BCFF 6C86F5 4254D6 2B2F8F, nose 1C1F66, ink 17151F. -->
+    <Viewbox Stretch="Uniform">
+        <Canvas Width="844" Height="780">
+            <!-- The whole body breathes, hops and leans together. Pivot: bottom middle of the blob. -->
+            <Canvas x:Name="Body" Width="844" Height="780">
+                <Canvas.RenderTransform>
+                    <TransformGroup>
+                        <ScaleTransform x:Name="BodyStretch" CenterX="422" CenterY="744"/>
+                        <RotateTransform x:Name="BodyLean" CenterX="422" CenterY="744"/>
+                        <TranslateTransform x:Name="BodyShift"/>
+                    </TransformGroup>
+                </Canvas.RenderTransform>
+
+                <!-- Blob outline: Data is set in code (BlobGeometry), shared by the skin and its shine. -->
+                <Path x:Name="Skin">
+                    <Path.Fill>
+                        <LinearGradientBrush StartPoint="0.25,0.067" EndPoint="0.75,0.933">
+                            <GradientStop Color="#A9BCFF" Offset="0"/>
+                            <GradientStop Color="#6C86F5" Offset="0.34"/>
+                            <GradientStop Color="#4254D6" Offset="0.68"/>
+                            <GradientStop Color="#2B2F8F" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Path.Fill>
+                </Path>
+                <Path x:Name="Shine">
+                    <Path.Fill>
+                        <RadialGradientBrush MappingMode="Absolute" Center="258,170" GradientOrigin="258,170" RadiusX="243" RadiusY="243">
+                            <GradientStop Color="#80FFFFFF" Offset="0"/>
+                            <GradientStop Color="#00FFFFFF" Offset="1"/>
+                        </RadialGradientBrush>
+                    </Path.Fill>
+                </Path>
+                <!-- A little glossy sparkle on his head. -->
+                <Ellipse Canvas.Left="202" Canvas.Top="84" Width="46" Height="22" Fill="White" Opacity="0.35"/>
+
+                <!-- The little blueberry crown. -->
+                <Polygon Canvas.Left="380" Canvas.Top="24" Fill="#1C1F66"
+                         Points="42,5.6 50.4,22.4 72.8,16.8 56,33.6 64.4,50.4 42,39.2 19.6,50.4 28,33.6 11.2,16.8 33.6,22.4"/>
+
+                <!-- Blushy cheeks. -->
+                <Ellipse Canvas.Left="185" Canvas.Top="297" Width="90" Height="42">
+                    <Ellipse.Fill>
+                        <RadialGradientBrush>
+                            <GradientStop Color="#66F3A6D8" Offset="0"/>
+                            <GradientStop Color="#00F3A6D8" Offset="1"/>
+                        </RadialGradientBrush>
+                    </Ellipse.Fill>
+                </Ellipse>
+                <Ellipse Canvas.Left="569" Canvas.Top="297" Width="90" Height="42">
+                    <Ellipse.Fill>
+                        <RadialGradientBrush>
+                            <GradientStop Color="#66F3A6D8" Offset="0"/>
+                            <GradientStop Color="#00F3A6D8" Offset="1"/>
+                        </RadialGradientBrush>
+                    </Ellipse.Fill>
+                </Ellipse>
+
+                <!-- Eyes are built in code: they blink by squashing their clip, and the pupils follow his gaze. -->
+                <Canvas x:Name="Eyes"/>
+
+                <!-- Little arched eyebrows. -->
+                <Path Canvas.Left="298" Canvas.Top="82" Data="M -38,6 Q 0,-12 38,6" Stroke="#1C1F66" StrokeThickness="14"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                <Path Canvas.Left="558" Canvas.Top="82" Data="M -38,6 Q 0,-12 38,6" Stroke="#1C1F66" StrokeThickness="14"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+
+                <!-- His little mouth-nose. -->
+                <Ellipse Canvas.Left="392" Canvas.Top="316" Width="60" Height="38" Fill="#1C1F66"/>
+            </Canvas>
+        </Canvas>
+    </Viewbox>
+</UserControl>
