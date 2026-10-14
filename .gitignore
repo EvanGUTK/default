@@ -11,3 +11,7 @@ Secrets.xcconfig
 
 # Your own signing team (see Config/Local.xcconfig.example)
 Config/Local.xcconfig
+
+# .NET / Windows build outputs
+Windows/**/bin/
+Windows/**/obj/
