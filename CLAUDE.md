@@ -2,6 +2,22 @@
 
 Read AGENTS.md first — it is the primary instruction file. This file adds Claude-specific notes and repeats the most critical rules.
 
+## Agent-to-agent communication (A2A)
+
+You run inside a Herdr managed pane. Herdr Link is registered as an MCP server under the namespace `herdr_link` (see `.mcp.json` at the repo root). Use it to notify Chief (Hermes) and ask questions.
+
+Activate once per session (idempotent):
+  mcp__herdr_link__herdr_link {}
+
+Then send:
+  mcp__herdr_link__herdr_link_send { "to": "hermes", "message": "DONE: <task> — <summary>" }
+  mcp__herdr_link__herdr_link_send { "to": "hermes", "message": "BLOCKED: <task> — <reason>" }
+  mcp__herdr_link__herdr_link_send { "to": "hermes", "message": "QUESTION: <task> — <question>" }
+
+Discover live peers: mcp__herdr_link__herdr_link_peers {}
+
+Send one message and end your turn. Do not poll or wait. Do NOT use shell herdr commands for this.
+
 ## Atomic commits — required
 
 Every commit must contain exactly one logical change. This is a hard rule so the owner can bisect and revert individual behaviors without untangling unrelated work.

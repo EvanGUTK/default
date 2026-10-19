@@ -14,6 +14,29 @@ Read README.md, docs/DECISIONS.md, and the document relevant to the requested ta
 
 A hierarchy document describes future responsibilities; it does not by itself require spawning agents for every task. Assign independent bounded tasks only when appropriate and authorized. Keep Chief and Validator responsibilities distinct in implementation reviews.
 
+## Agent-to-agent communication (A2A)
+
+All agents in this project run inside Herdr managed panes with Herdr Link available as an MCP server (registered as `herdr_link` in `.mcp.json` at the repo root). Use it to notify Chief and ask questions without leaving your task.
+
+**To notify Chief (Hermes) or ask a question:**
+
+Activate the gateway once per session (idempotent):
+  mcp__herdr_link__herdr_link {}
+
+Then send:
+  mcp__herdr_link__herdr_link_send { "to": "hermes", "message": "DONE: <task-name> — <one-line summary>" }
+  mcp__herdr_link__herdr_link_send { "to": "hermes", "message": "BLOCKED: <task-name> — <what you need>" }
+  mcp__herdr_link__herdr_link_send { "to": "hermes", "message": "QUESTION: <task-name> — <specific question>" }
+
+Discover live peers if needed:
+  mcp__herdr_link__herdr_link_peers {}
+
+Rules:
+- Send exactly one message and end your turn. Do not poll or wait for a reply; Herdr delivers it.
+- Use A2A whenever done, blocked, or when you have a question requiring owner input.
+- Do NOT use shell commands like `herdr agent prompt hermes "..."` — use the MCP tool instead.
+- A2A is same-workspace only.
+
 ## Engineering rules
 
 Use a separate feature branch/worktree for each concurrent implementation task. Declare ownership of shared contracts.
