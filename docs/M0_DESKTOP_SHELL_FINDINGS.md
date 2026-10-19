@@ -32,11 +32,11 @@ Then launch `apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/debug/toby-des
 | Proof | Result |
 | --- | --- |
 | Original system tray icon | The Windows notification area exposed a `Toby Desktop Shell Spike` tray button with a 40×40 logical UI Automation bound. The icon is authored for this spike; no inherited assets are used. |
-| Right-click menu and Quit | The host builds with a tray menu containing Settings and Quit. I could not make Windows expose that menu through the available UI automation, so the Quit interaction is **not runtime verified**. |
+| Right-click menu and Quit | The host builds with a tray menu containing Settings and Quit. UI Automation still does not expose the context menu, but the Quit command was invoked through Win32 `WM_COMMAND` on the tray HWND and the process exited with code 0. See [M0 tray Quit verification](M0_TRAY_QUIT_VERIFICATION.md). |
 | Transparent top-right overlay | Verified on a 1920×1080 monitor at 100% scaling: UI Automation reported `(1604, 16, 300, 80)`. The window rendered the overlay proof text and is configured transparent, undecorated, always on top, and excluded from the taskbar. |
 | Settings route, close, and position | Opened Settings from the tray icon. After moving it to `(420, 280)`, a fresh process restored the Settings outer window at `(420, 280, 536, 339)`. Invoking Close hid the window (`visible: true → false`). |
 | Ctrl+Shift+S stop path | Verified on the rebuilt host: the overlay visibility changed from `true` to `false`. |
-| Clean exit | **Not runtime verified.** Since the Quit menu could not be invoked, I did not observe the process exit code or tray removal. The running debug process was force-stopped after checks to release its executable for rebuilds. |
+| Clean exit | Verified via the native tray menu command path: posting `WM_COMMAND` for Quit to the `tray_icon_app` HWND terminated the debug process with exit code `0`. A physical right-click and selection has not been manually observed. See [M0 tray Quit verification](M0_TRAY_QUIT_VERIFICATION.md). |
 
 Build evidence collected on Windows:
 
@@ -54,8 +54,8 @@ Settings position is persisted in the app data directory as `settings-position.j
 
 ## Follow-up
 
-- Verify the actual tray context menu, invoke Quit, and record that the icon disappears and the process exits with code 0.
+- Manually open the tray context menu, select Quit, and observe icon removal if physical-menu confirmation is required.
 - Exercise the overlay and Settings at non-100% DPI and across monitors with negative virtual-screen coordinates.
 - Run the Tauri CLI dev workflow outside a WSL-backed Windows file tree, or determine whether a narrower watcher configuration avoids the observed `EBUSY` failure.
 
-This document records a foundation spike, not release readiness. The required clean-shutdown proof remains outstanding.
+This document records a foundation spike, not release readiness. The clean-shutdown process-exit proof passes through the native Quit command path; observing a physical menu selection and tray-icon removal remains optional corroboration outside this automated check.
